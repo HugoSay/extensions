@@ -195,6 +195,11 @@ export default function ViewLoggedTime() {
           day: "numeric",
         });
         const subtitle = day.totalSeconds > 0 ? formatDuration(day.totalSeconds) : "No time logged";
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const dayDate = new Date(day.date);
+        dayDate.setHours(0, 0, 0, 0);
+        const isFuture = dayDate > today;
 
         return (
           <List.Section key={day.date.toISOString()} title={dayLabel} subtitle={subtitle}>
@@ -264,7 +269,8 @@ export default function ViewLoggedTime() {
                     }
                   />
                 ))
-              : // Show "Log time" prompt only if below threshold
+              : // Show "Log time" prompt only if below threshold and not in the future
+                !isFuture &&
                 day.totalSeconds < dailyHoursThreshold * 3600 && (
                   <List.Item
                     title="Log time for this day"
