@@ -27,6 +27,10 @@ export type Issue = {
   key: string;
   fields: {
     summary: string;
+    project?: {
+      key: string;
+      name: string;
+    };
   };
 };
 
@@ -60,3 +64,55 @@ export type JiraErrorResponseBody = {
   message?: string;
   messages?: string[];
 } & unknown;
+
+export type Worklog = {
+  id: string;
+  issueId: string;
+  author: {
+    accountId: string;
+    displayName: string;
+  };
+  timeSpentSeconds: number;
+  comment?: string | WorklogComment;
+  started: string;
+  created: string;
+  updated: string;
+};
+
+export type WorklogComment = {
+  type: string;
+  version: number;
+  content: Array<{
+    type: string;
+    content?: Array<{
+      type: string;
+      text: string;
+    }>;
+  }>;
+};
+
+export type IssueWithWorklogs = Issue & {
+  fields: Issue["fields"] & {
+    worklog?: {
+      worklogs: Worklog[];
+    };
+  };
+};
+
+export type DailyWorklog = {
+  date: Date;
+  entries: WorklogEntry[];
+  totalSeconds: number;
+};
+
+export type WorklogEntry = {
+  worklog: Worklog;
+  issue: {
+    key: string;
+    summary: string;
+    project: {
+      key: string;
+      name: string;
+    };
+  };
+};

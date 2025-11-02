@@ -2,7 +2,7 @@ import { parseDate } from "./utils";
 import { jiraRequest } from "./requests";
 import { issuesValidator, paginationValidator, projectsValidator, jqlSearchValidator } from "./validators";
 import { getPreferenceValues } from "@raycast/api";
-import { Project } from "./types";
+import { Project, IssueWithWorklogs, WorklogEntry } from "./types";
 
 // Helpers to define the structure for preferences
 type UserPreferences = {
@@ -84,8 +84,7 @@ export const getIssues = async (nextPageToken: string | null | undefined, projec
     jqlParts.push(`(${userPrefs.customJQL})`);
   }
 
-  // Default to all issues if no filters provided
-  const jql = jqlParts.length > 0 ? jqlParts.join(" AND ") : "order by created DESC";
+  const jql = jqlParts.length > 0 ? jqlParts.join(" AND ") : "";
 
   // Build request body for POST /rest/api/3/search/jql
   const requestBody: Record<string, unknown> = {
@@ -194,4 +193,88 @@ export const postTimeLog = async (timeSpentSeconds: number, issueId: string, des
 
   const success = await jiraRequest(apiPath, body, "POST");
   return success;
+};
+
+export const getWorklogs = async (startDate: Date, endDate: Date): Promise<WorklogEntry[]> => {
+  const isJiraCloud = userPrefs.isJiraCloud === "cloud";
+
+  // Format dates for JQL (YYYY-MM-DD)
+  const formatDateForJQL = (date: Date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+
+  const startDateStr = formatDateForJQL(startDate);
+  const endDateStr = formatDateForJQL(endDate);
+
+  // Build JQL query to find issues with worklogs in date range
+  const jql = `worklogDate >= "${startDateStr}" AND worklogDate <= "${endDateStr}" AND worklogAuthor = currentUser()`;
+
+  if (!isJiraCloud) {
+    // Jira Server uses v2 API
+    const basePath = `/rest/api/2/search?jql=${encodeURIComponent(jql)}&fields=summary,project,worklog&maxResults=1000`;
+    const apiPath = getApiPath(basePath);
+
+    console.log(`Fetching worklogs from (Jira Server): ${apiPath}`);
+    const response = await jiraRequest(apiPath);
+
+    return extractWorklogEntries(response, startDate, endDate);
+  }
+
+  // Jira Cloud uses v3 API with POST
+  const requestBody = {
+    jql,
+    fields: ["summary", "project", "worklog"],
+    maxResults: 1000,
+  };
+
+  const apiPath = "/rest/api/3/search";
+  console.log(`Fetching worklogs from (Jira Cloud): ${apiPath}`);
+  const response = await jiraRequest(apiPath, JSON.stringify(requestBody), "POST");
+
+  return extractWorklogEntries(response, startDate, endDate);
+};
+
+const extractWorklogEntries = (response: unknown, startDate: Date, endDate: Date): WorklogEntry[] => {
+  if (!issuesValidator(response)) {
+    console.error("Invalid worklog response:", response);
+    return [];
+  }
+
+  const issues = response.issues as IssueWithWorklogs[];
+  const entries: WorklogEntry[] = [];
+  const currentUsername = userPrefs.username;
+
+  issues.forEach((issue) => {
+    const worklogs = issue.fields.worklog?.worklogs || [];
+
+    worklogs.forEach((worklog) => {
+      // Filter by date range and current user
+      const worklogDate = new Date(worklog.started);
+      const isInRange = worklogDate >= startDate && worklogDate <= endDate;
+      const isCurrentUser =
+        worklog.author.displayName === currentUsername || worklog.author.accountId.includes(currentUsername);
+
+      if (isInRange && isCurrentUser) {
+        entries.push({
+          worklog,
+          issue: {
+            key: issue.key,
+            summary: issue.fields.summary,
+            project: {
+              key: issue.fields.project?.key || "",
+              name: issue.fields.project?.name || "",
+            },
+          },
+        });
+      }
+    });
+  });
+
+  // Sort by date descending (newest first)
+  entries.sort((a, b) => new Date(b.worklog.started).getTime() - new Date(a.worklog.started).getTime());
+
+  return entries;
 };
