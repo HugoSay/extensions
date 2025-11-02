@@ -223,14 +223,14 @@ export const getWorklogs = async (startDate: Date, endDate: Date): Promise<Workl
     return extractWorklogEntries(response, startDate, endDate);
   }
 
-  // Jira Cloud uses v3 API with POST
+  // Jira Cloud uses v3 JQL search API with POST
   const requestBody = {
     jql,
     fields: ["summary", "project", "worklog"],
     maxResults: 1000,
   };
 
-  const apiPath = "/rest/api/3/search";
+  const apiPath = "/rest/api/3/search/jql";
   console.log(`Fetching worklogs from (Jira Cloud): ${apiPath}`);
   const response = await jiraRequest(apiPath, JSON.stringify(requestBody), "POST");
 
