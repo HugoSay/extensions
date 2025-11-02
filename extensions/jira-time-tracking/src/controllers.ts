@@ -195,6 +195,82 @@ export const postTimeLog = async (timeSpentSeconds: number, issueId: string, des
   return success;
 };
 
+export const updateWorklog = async (
+  issueId: string,
+  worklogId: string,
+  timeSpentSeconds: number,
+  description: string,
+  startedAt: Date,
+) => {
+  const basePath = `/rest/api/3/issue/${issueId}/worklog/${worklogId}?notifyUsers=false`;
+  const apiPath = getApiPath(basePath);
+
+  const isJiraCloud = userPrefs.isJiraCloud === "cloud";
+
+  const comment = isJiraCloud
+    ? {
+        type: "doc",
+        version: 1,
+        content: [
+          {
+            type: "paragraph",
+            content: [
+              {
+                text: description,
+                type: "text",
+              },
+            ],
+          },
+        ],
+      }
+    : description;
+
+  const body = JSON.stringify({
+    timeSpentSeconds,
+    comment,
+    started: parseDate(startedAt),
+  });
+
+  const success = await jiraRequest(apiPath, body, "PUT");
+  return success;
+};
+
+export const deleteWorklog = async (issueId: string, worklogId: string) => {
+  const basePath = `/rest/api/3/issue/${issueId}/worklog/${worklogId}?notifyUsers=false`;
+  const apiPath = getApiPath(basePath);
+
+  const success = await jiraRequest(apiPath, undefined, "DELETE");
+  return success;
+};
+
+// Cache for current user's accountId
+let currentUserAccountId: string | null = null;
+
+// Fetch current user's accountId from Jira
+const getCurrentUserAccountId = async (isJiraCloud: boolean): Promise<string | null> => {
+  if (currentUserAccountId) {
+    return currentUserAccountId;
+  }
+
+  try {
+    const apiPath = isJiraCloud ? "/rest/api/3/myself" : "/rest/api/2/myself";
+    const response = await jiraRequest(apiPath);
+
+    if (response && typeof response === "object" && "accountId" in response) {
+      currentUserAccountId = response.accountId as string;
+      return currentUserAccountId;
+    } else if (response && typeof response === "object" && "name" in response) {
+      // Jira Server uses "name" field
+      currentUserAccountId = response.name as string;
+      return currentUserAccountId;
+    }
+  } catch (error) {
+    console.error("Failed to fetch current user info:", error);
+  }
+
+  return null;
+};
+
 export const getWorklogs = async (startDate: Date, endDate: Date): Promise<WorklogEntry[]> => {
   const isJiraCloud = userPrefs.isJiraCloud === "cloud";
 
@@ -209,7 +285,7 @@ export const getWorklogs = async (startDate: Date, endDate: Date): Promise<Workl
   const startDateStr = formatDateForJQL(startDate);
   const endDateStr = formatDateForJQL(endDate);
 
-  // Build JQL query to find issues with worklogs in date range
+  // Build JQL query to find issues with worklogs in date range by current user
   const jql = `worklogDate >= "${startDateStr}" AND worklogDate <= "${endDateStr}" AND worklogAuthor = currentUser()`;
 
   if (!isJiraCloud) {
@@ -217,7 +293,6 @@ export const getWorklogs = async (startDate: Date, endDate: Date): Promise<Workl
     const basePath = `/rest/api/2/search?jql=${encodeURIComponent(jql)}&fields=summary,project&maxResults=1000`;
     const apiPath = getApiPath(basePath);
 
-    console.log(`Fetching issues from (Jira Server): ${apiPath}`);
     const response = await jiraRequest(apiPath);
 
     return extractWorklogEntriesWithFetch(response, startDate, endDate, isJiraCloud);
@@ -232,16 +307,8 @@ export const getWorklogs = async (startDate: Date, endDate: Date): Promise<Workl
   };
 
   const apiPath = "/rest/api/3/search/jql";
-  console.log(`Fetching issues from (Jira Cloud): ${apiPath}`);
-  console.log(`JQL Query: ${jql}`);
-  console.log(`Date range: ${startDateStr} to ${endDateStr}`);
 
   const response = await jiraRequest(apiPath, JSON.stringify(requestBody), "POST");
-  const issueCount =
-    response && typeof response === "object" && "issues" in response && Array.isArray(response.issues)
-      ? response.issues.length
-      : 0;
-  console.log(`Found ${issueCount} issues`);
 
   return extractWorklogEntriesWithFetch(response, startDate, endDate, isJiraCloud);
 };
@@ -259,7 +326,9 @@ const extractWorklogEntriesWithFetch = async (
   }
 
   const issues = response.issues as IssueWithWorklogs[];
-  console.log(`Fetching worklogs for ${issues.length} issues`);
+
+  // Get current user's accountId from Jira API
+  const currentUserAccountIdFromApi = await getCurrentUserAccountId(isJiraCloud);
 
   const entries: WorklogEntry[] = [];
 
@@ -271,7 +340,6 @@ const extractWorklogEntriesWithFetch = async (
         : `/rest/api/2/issue/${issue.key}/worklog`;
       const apiPath = getApiPath(worklogPath);
 
-      console.log(`Fetching worklogs for ${issue.key}: ${apiPath}`);
       const worklogResponse = await jiraRequest(apiPath);
 
       if (worklogResponse && typeof worklogResponse === "object" && "worklogs" in worklogResponse) {
@@ -282,7 +350,21 @@ const extractWorklogEntriesWithFetch = async (
               const worklogDate = new Date(worklog.started);
               const isInRange = worklogDate >= startDate && worklogDate <= endDate;
 
-              if (isInRange) {
+              // Check if the worklog author matches current user
+              let isCurrentUser = false;
+              if ("author" in worklog && worklog.author && typeof worklog.author === "object") {
+                if (isJiraCloud) {
+                  // Jira Cloud: Check accountId against the fetched accountId from API
+                  const accountId = "accountId" in worklog.author ? worklog.author.accountId : null;
+                  isCurrentUser = accountId === currentUserAccountIdFromApi;
+                } else {
+                  // Jira Server: Check name field against the fetched name from API
+                  const authorName = "name" in worklog.author ? worklog.author.name : null;
+                  isCurrentUser = authorName === currentUserAccountIdFromApi;
+                }
+              }
+
+              if (isInRange && isCurrentUser) {
                 entries.push({
                   worklog: worklog as (typeof entries)[0]["worklog"],
                   issue: {
@@ -303,8 +385,6 @@ const extractWorklogEntriesWithFetch = async (
       console.error(`Failed to fetch worklogs for ${issue.key}:`, error);
     }
   }
-
-  console.log(`Total worklogs fetched: ${entries.length}`);
 
   // Sort by date descending (newest first)
   entries.sort((a, b) => new Date(b.worklog.started).getTime() - new Date(a.worklog.started).getTime());

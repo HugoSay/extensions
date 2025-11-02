@@ -28,7 +28,7 @@ const getHeaders = () => {
   }
 };
 
-export const jiraRequest = async (endpoint: string, requestBody?: string, method: "GET" | "POST" = "GET") => {
+export const jiraRequest = async (endpoint: string, requestBody?: string, method: "GET" | "POST" | "PUT" | "DELETE" = "GET") => {
   const headers = getHeaders();
   const opts = {
     headers,
@@ -36,6 +36,22 @@ export const jiraRequest = async (endpoint: string, requestBody?: string, method
     body: requestBody,
   };
   const res = await fetch(createJiraUrl(endpoint), opts);
+
+  // DELETE requests may not return JSON body
+  if (method === "DELETE") {
+    if (!res.ok) {
+      // Try to parse error body if present
+      const text = await res.text();
+      try {
+        const errorBody = text ? JSON.parse(text) : {};
+        handleJiraResponseError(res.status, errorBody);
+      } catch {
+        handleJiraResponseError(res.status, { message: text || "Delete operation failed" });
+      }
+    }
+    return null;
+  }
+
   const responseBody = await res.json();
   if (!res.ok) handleJiraResponseError(res.status, responseBody);
   return responseBody;
