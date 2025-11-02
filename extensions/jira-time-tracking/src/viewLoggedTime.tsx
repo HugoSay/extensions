@@ -5,16 +5,24 @@ import { DailyWorklog, WorklogEntry, WorklogComment } from "./types";
 
 type Preferences = {
   dailyHoursThreshold?: string;
+  domain?: string;
 };
 
 export default function ViewLoggedTime() {
   const preferences = getPreferenceValues<Preferences>();
   const dailyHoursThreshold = parseFloat(preferences.dailyHoursThreshold || "7");
+  const jiraDomain = preferences.domain || "";
 
   const [currentMonth, setCurrentMonth] = useState<Date>(new Date());
   const [dailyWorklogs, setDailyWorklogs] = useState<DailyWorklog[]>([]);
   const [loading, setLoading] = useState(true);
   const [showingDetail, setShowingDetail] = useState(false);
+
+  // Build Jira issue URL
+  const getJiraIssueUrl = (issueKey: string) => {
+    const domain = jiraDomain.replace(/^https?:\/\//, "").replace(/\/$/, "");
+    return `https://${domain}/browse/${issueKey}`;
+  };
 
   // Format month for display
   const formatMonth = (date: Date) => {
@@ -231,19 +239,27 @@ export default function ViewLoggedTime() {
                     }
                     actions={
                       <ActionPanel>
+                        <Action.OpenInBrowser
+                          title="Open in Jira"
+                          url={getJiraIssueUrl(entry.issue.key)}
+                          icon={Icon.Globe}
+                        />
                         <Action
                           title="Toggle Details"
                           icon={Icon.AppWindowSidebarLeft}
                           onAction={() => setShowingDetail(!showingDetail)}
+                          shortcut={{ modifiers: ["cmd"], key: "d" }}
                         />
                         <Action.CopyToClipboard
                           title="Copy Issue Key"
                           content={entry.issue.key}
                           shortcut={{ modifiers: ["cmd"], key: "c" }}
                         />
-                        <Action title="Previous Month" icon={Icon.ArrowLeft} onAction={goToPreviousMonth} />
-                        <Action title="Next Month" icon={Icon.ArrowRight} onAction={goToNextMonth} />
-                        <Action title="Current Month" icon={Icon.Calendar} onAction={goToCurrentMonth} />
+                        <ActionPanel.Section title="Navigation">
+                          <Action title="Previous Month" icon={Icon.ArrowLeft} onAction={goToPreviousMonth} />
+                          <Action title="Next Month" icon={Icon.ArrowRight} onAction={goToNextMonth} />
+                          <Action title="Current Month" icon={Icon.Calendar} onAction={goToCurrentMonth} />
+                        </ActionPanel.Section>
                       </ActionPanel>
                     }
                   />
