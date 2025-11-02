@@ -65,7 +65,6 @@ export default function ViewLoggedTime() {
 
   // Group worklogs by day
   const groupWorklogsByDay = (entries: WorklogEntry[]): DailyWorklog[] => {
-    const { start, end } = getMonthBounds(currentMonth);
     const dailyMap = new Map<string, WorklogEntry[]>();
 
     // Add all entries to their respective days
@@ -81,23 +80,22 @@ export default function ViewLoggedTime() {
       }
     });
 
-    // Generate all days in the month
+    // Only create entries for days that have worklogs
     const days: DailyWorklog[] = [];
-    const current = new Date(start);
 
-    while (current <= end) {
-      const dateKey = current.toISOString().split("T")[0];
+    // Sort by date descending (most recent first)
+    const sortedDates = Array.from(dailyMap.keys()).sort((a, b) => b.localeCompare(a));
+
+    sortedDates.forEach((dateKey) => {
       const dayEntries = dailyMap.get(dateKey) || [];
       const totalSeconds = dayEntries.reduce((sum, entry) => sum + entry.worklog.timeSpentSeconds, 0);
 
       days.push({
-        date: new Date(current),
+        date: new Date(dateKey),
         entries: dayEntries,
         totalSeconds,
       });
-
-      current.setDate(current.getDate() + 1);
-    }
+    });
 
     return days;
   };
@@ -167,78 +165,52 @@ export default function ViewLoggedTime() {
 
         return (
           <List.Section key={day.date.toISOString()} title={dayLabel} subtitle={subtitle}>
-            {day.entries.length > 0 ? (
-              day.entries.map((entry) => (
-                <List.Item
-                  key={entry.worklog.id}
-                  title={entry.issue.key}
-                  subtitle={entry.issue.summary}
-                  icon={{ source: Icon.Circle, tintColor: Color.Blue }}
-                  keywords={[entry.issue.key, entry.issue.summary, entry.issue.project.name]}
-                  accessories={[
-                    { text: formatDuration(entry.worklog.timeSpentSeconds), icon: Icon.Clock },
-                    { text: entry.issue.project.key, icon: Icon.Box },
-                  ]}
-                  detail={
-                    <List.Item.Detail
-                      markdown={`## ${entry.issue.key}: ${entry.issue.summary}\n\n${extractCommentText(entry.worklog.comment) || "_No description provided_"}`}
-                      metadata={
-                        <List.Item.Detail.Metadata>
-                          <List.Item.Detail.Metadata.Label title="Issue" text={entry.issue.key} />
-                          <List.Item.Detail.Metadata.Label title="Summary" text={entry.issue.summary} />
-                          <List.Item.Detail.Metadata.Separator />
-                          <List.Item.Detail.Metadata.Label title="Project" text={entry.issue.project.name} />
-                          <List.Item.Detail.Metadata.Label title="Project Key" text={entry.issue.project.key} />
-                          <List.Item.Detail.Metadata.Separator />
-                          <List.Item.Detail.Metadata.Label
-                            title="Time Spent"
-                            text={formatDuration(entry.worklog.timeSpentSeconds)}
-                          />
-                          <List.Item.Detail.Metadata.Label
-                            title="Started"
-                            text={new Date(entry.worklog.started).toLocaleString()}
-                          />
-                          <List.Item.Detail.Metadata.Label title="Logged By" text={entry.worklog.author.displayName} />
-                        </List.Item.Detail.Metadata>
-                      }
-                    />
-                  }
-                  actions={
-                    <ActionPanel>
-                      <Action
-                        title="Toggle Details"
-                        icon={Icon.AppWindowSidebarLeft}
-                        onAction={() => setShowingDetail(!showingDetail)}
-                      />
-                      <Action.CopyToClipboard
-                        title="Copy Issue Key"
-                        content={entry.issue.key}
-                        shortcut={{ modifiers: ["cmd"], key: "c" }}
-                      />
-                      <Action title="Previous Month" icon={Icon.ArrowLeft} onAction={goToPreviousMonth} />
-                      <Action title="Next Month" icon={Icon.ArrowRight} onAction={goToNextMonth} />
-                      <Action title="Current Month" icon={Icon.Calendar} onAction={goToCurrentMonth} />
-                    </ActionPanel>
-                  }
-                />
-              ))
-            ) : (
+            {day.entries.map((entry) => (
               <List.Item
-                title="No time logged"
-                subtitle="Tap to log time for this day"
-                icon={{ source: Icon.Circle, tintColor: Color.SecondaryText }}
+                key={entry.worklog.id}
+                title={entry.issue.key}
+                subtitle={entry.issue.summary}
+                icon={{ source: Icon.Circle, tintColor: Color.Blue }}
+                keywords={[entry.issue.key, entry.issue.summary, entry.issue.project.name]}
+                accessories={[
+                  { text: formatDuration(entry.worklog.timeSpentSeconds), icon: Icon.Clock },
+                  { text: entry.issue.project.key, icon: Icon.Box },
+                ]}
+                detail={
+                  <List.Item.Detail
+                    markdown={`## ${entry.issue.key}: ${entry.issue.summary}\n\n${extractCommentText(entry.worklog.comment) || "_No description provided_"}`}
+                    metadata={
+                      <List.Item.Detail.Metadata>
+                        <List.Item.Detail.Metadata.Label title="Issue" text={entry.issue.key} />
+                        <List.Item.Detail.Metadata.Label title="Summary" text={entry.issue.summary} />
+                        <List.Item.Detail.Metadata.Separator />
+                        <List.Item.Detail.Metadata.Label title="Project" text={entry.issue.project.name} />
+                        <List.Item.Detail.Metadata.Label title="Project Key" text={entry.issue.project.key} />
+                        <List.Item.Detail.Metadata.Separator />
+                        <List.Item.Detail.Metadata.Label
+                          title="Time Spent"
+                          text={formatDuration(entry.worklog.timeSpentSeconds)}
+                        />
+                        <List.Item.Detail.Metadata.Label
+                          title="Started"
+                          text={new Date(entry.worklog.started).toLocaleString()}
+                        />
+                        <List.Item.Detail.Metadata.Label title="Logged By" text={entry.worklog.author.displayName} />
+                      </List.Item.Detail.Metadata>
+                    }
+                  />
+                }
                 actions={
                   <ActionPanel>
                     <Action
-                      title="Log Time for This Day"
-                      icon={Icon.Plus}
-                      onAction={() => {
-                        showToast(
-                          Toast.Style.Animated,
-                          "Opening Log Time",
-                          "This will open the Log Time command with pre-selected date",
-                        );
-                      }}
+                      title="Toggle Details"
+                      icon={Icon.AppWindowSidebarLeft}
+                      onAction={() => setShowingDetail(!showingDetail)}
+                    />
+                    <Action.CopyToClipboard
+                      title="Copy Issue Key"
+                      content={entry.issue.key}
+                      shortcut={{ modifiers: ["cmd"], key: "c" }}
                     />
                     <Action title="Previous Month" icon={Icon.ArrowLeft} onAction={goToPreviousMonth} />
                     <Action title="Next Month" icon={Icon.ArrowRight} onAction={goToNextMonth} />
@@ -246,7 +218,7 @@ export default function ViewLoggedTime() {
                   </ActionPanel>
                 }
               />
-            )}
+            ))}
           </List.Section>
         );
       })}

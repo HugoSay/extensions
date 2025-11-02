@@ -214,64 +214,97 @@ export const getWorklogs = async (startDate: Date, endDate: Date): Promise<Workl
 
   if (!isJiraCloud) {
     // Jira Server uses v2 API
-    const basePath = `/rest/api/2/search?jql=${encodeURIComponent(jql)}&fields=summary,project,worklog&maxResults=1000`;
+    const basePath = `/rest/api/2/search?jql=${encodeURIComponent(jql)}&fields=summary,project&maxResults=1000`;
     const apiPath = getApiPath(basePath);
 
-    console.log(`Fetching worklogs from (Jira Server): ${apiPath}`);
+    console.log(`Fetching issues from (Jira Server): ${apiPath}`);
     const response = await jiraRequest(apiPath);
 
-    return extractWorklogEntries(response, startDate, endDate);
+    return extractWorklogEntriesWithFetch(response, startDate, endDate, isJiraCloud);
   }
 
   // Jira Cloud uses v3 JQL search API with POST
+  // Don't fetch worklog field here - we'll fetch it separately per issue to get ALL worklogs
   const requestBody = {
     jql,
-    fields: ["summary", "project", "worklog"],
+    fields: ["summary", "project"],
     maxResults: 1000,
   };
 
   const apiPath = "/rest/api/3/search/jql";
-  console.log(`Fetching worklogs from (Jira Cloud): ${apiPath}`);
-  const response = await jiraRequest(apiPath, JSON.stringify(requestBody), "POST");
+  console.log(`Fetching issues from (Jira Cloud): ${apiPath}`);
+  console.log(`JQL Query: ${jql}`);
+  console.log(`Date range: ${startDateStr} to ${endDateStr}`);
 
-  return extractWorklogEntries(response, startDate, endDate);
+  const response = await jiraRequest(apiPath, JSON.stringify(requestBody), "POST");
+  const issueCount =
+    response && typeof response === "object" && "issues" in response && Array.isArray(response.issues)
+      ? response.issues.length
+      : 0;
+  console.log(`Found ${issueCount} issues`);
+
+  return extractWorklogEntriesWithFetch(response, startDate, endDate, isJiraCloud);
 };
 
-const extractWorklogEntries = (response: unknown, startDate: Date, endDate: Date): WorklogEntry[] => {
+// Fetch ALL worklogs for each issue (handling pagination)
+const extractWorklogEntriesWithFetch = async (
+  response: unknown,
+  startDate: Date,
+  endDate: Date,
+  isJiraCloud: boolean,
+): Promise<WorklogEntry[]> => {
   if (!issuesValidator(response)) {
-    console.error("Invalid worklog response:", response);
+    console.error("Invalid issue response:", response);
     return [];
   }
 
   const issues = response.issues as IssueWithWorklogs[];
+  console.log(`Fetching worklogs for ${issues.length} issues`);
+
   const entries: WorklogEntry[] = [];
-  const currentUsername = userPrefs.username;
 
-  issues.forEach((issue) => {
-    const worklogs = issue.fields.worklog?.worklogs || [];
+  // Fetch worklogs for each issue
+  for (const issue of issues) {
+    try {
+      const worklogPath = isJiraCloud
+        ? `/rest/api/3/issue/${issue.key}/worklog`
+        : `/rest/api/2/issue/${issue.key}/worklog`;
+      const apiPath = getApiPath(worklogPath);
 
-    worklogs.forEach((worklog) => {
-      // Filter by date range and current user
-      const worklogDate = new Date(worklog.started);
-      const isInRange = worklogDate >= startDate && worklogDate <= endDate;
-      const isCurrentUser =
-        worklog.author.displayName === currentUsername || worklog.author.accountId.includes(currentUsername);
+      console.log(`Fetching worklogs for ${issue.key}: ${apiPath}`);
+      const worklogResponse = await jiraRequest(apiPath);
 
-      if (isInRange && isCurrentUser) {
-        entries.push({
-          worklog,
-          issue: {
-            key: issue.key,
-            summary: issue.fields.summary,
-            project: {
-              key: issue.fields.project?.key || "",
-              name: issue.fields.project?.name || "",
-            },
-          },
-        });
+      if (worklogResponse && typeof worklogResponse === "object" && "worklogs" in worklogResponse) {
+        const worklogs = (worklogResponse as { worklogs: unknown }).worklogs;
+        if (Array.isArray(worklogs)) {
+          worklogs.forEach((worklog: unknown) => {
+            if (worklog && typeof worklog === "object" && "started" in worklog && typeof worklog.started === "string") {
+              const worklogDate = new Date(worklog.started);
+              const isInRange = worklogDate >= startDate && worklogDate <= endDate;
+
+              if (isInRange) {
+                entries.push({
+                  worklog: worklog as (typeof entries)[0]["worklog"],
+                  issue: {
+                    key: issue.key,
+                    summary: issue.fields.summary,
+                    project: {
+                      key: issue.fields.project?.key || "",
+                      name: issue.fields.project?.name || "",
+                    },
+                  },
+                });
+              }
+            }
+          });
+        }
       }
-    });
-  });
+    } catch (error) {
+      console.error(`Failed to fetch worklogs for ${issue.key}:`, error);
+    }
+  }
+
+  console.log(`Total worklogs fetched: ${entries.length}`);
 
   // Sort by date descending (newest first)
   entries.sort((a, b) => new Date(b.worklog.started).getTime() - new Date(a.worklog.started).getTime());
