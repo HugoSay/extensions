@@ -83,6 +83,15 @@
       "title": "Default Project Key",
       "description": "Set the key of a project to select by default (e.g., 'MYPROJECT').",
       "placeholder": "Enter project key"
+    },
+    {
+      "name": "dailyHoursThreshold",
+      "type": "textfield",
+      "required": false,
+      "title": "Daily Hours Threshold",
+      "description": "Minimum hours required per day before hiding the 'Log Time' prompt (default: 7).",
+      "placeholder": "7",
+      "default": "7"
     }
   ],
   "dependencies": {
