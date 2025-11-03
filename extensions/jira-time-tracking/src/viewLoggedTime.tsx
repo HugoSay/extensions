@@ -208,6 +208,9 @@ function AddTimeToIssueForm({ issueKey, issueSummary, onSuccess }: { issueKey: s
   );
 }
 
+// Cache for worklog entries by month (format: "YYYY-MM")
+const worklogCache = new Map<string, WorklogEntry[]>();
+
 export default function ViewLoggedTime() {
   const preferences = getPreferenceValues<Preferences>();
   const dailyHoursThreshold = parseFloat(preferences.dailyHoursThreshold || "7");
@@ -342,25 +345,83 @@ export default function ViewLoggedTime() {
     return days;
   };
 
-  // Refresh callback
+  // Get cache key for a month
+  const getMonthCacheKey = (date: Date): string => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    return `${year}-${month}`;
+  };
+
+  // Refresh callback - clears cache for current month
   const refreshWorklogs = () => {
+    const cacheKey = getMonthCacheKey(currentMonth);
+    worklogCache.delete(cacheKey);
     setRefreshTrigger((prev) => prev + 1);
   };
 
-  // Fetch worklogs for current month
+  // Prefetch adjacent months in the background
+  const prefetchAdjacentMonths = async (currentDate: Date) => {
+    const prefetchMonth = async (date: Date) => {
+      const cacheKey = getMonthCacheKey(date);
+      if (worklogCache.has(cacheKey)) {
+        return; // Already cached
+      }
+
+      try {
+        const { start, end } = getMonthBounds(date);
+        const entries = await getWorklogs(start, end);
+        worklogCache.set(cacheKey, entries);
+      } catch (error) {
+        // Silently fail - this is a background operation
+        console.error(`Failed to prefetch ${cacheKey}:`, error);
+      }
+    };
+
+    // Prefetch previous month
+    const prevMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1);
+    prefetchMonth(prevMonth);
+
+    // Prefetch next month
+    const nextMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1);
+    prefetchMonth(nextMonth);
+  };
+
+  // Fetch worklogs for current month with caching
   useEffect(() => {
     let isMounted = true;
 
     const fetchWorklogs = async () => {
+      const cacheKey = getMonthCacheKey(currentMonth);
+
+      // Check cache first
+      if (worklogCache.has(cacheKey)) {
+        const cachedEntries = worklogCache.get(cacheKey)!;
+        const grouped = groupWorklogsByDay(cachedEntries);
+        setDailyWorklogs(grouped);
+        setLoading(false);
+        showToast(Toast.Style.Success, `Loaded ${cachedEntries.length} worklogs (cached)`);
+
+        // Prefetch adjacent months in background
+        prefetchAdjacentMonths(currentMonth);
+        return;
+      }
+
+      // Not in cache, fetch from API
       setLoading(true);
       try {
         const { start, end } = getMonthBounds(currentMonth);
         const entries = await getWorklogs(start, end);
 
         if (isMounted) {
+          // Store in cache
+          worklogCache.set(cacheKey, entries);
+
           const grouped = groupWorklogsByDay(entries);
           setDailyWorklogs(grouped);
           showToast(Toast.Style.Success, `Loaded ${entries.length} worklogs`);
+
+          // Prefetch adjacent months in background
+          prefetchAdjacentMonths(currentMonth);
         }
       } catch (e) {
         if (isMounted) {

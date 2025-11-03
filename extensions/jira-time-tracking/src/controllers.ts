@@ -313,7 +313,7 @@ export const getWorklogs = async (startDate: Date, endDate: Date): Promise<Workl
   return extractWorklogEntriesWithFetch(response, startDate, endDate, isJiraCloud);
 };
 
-// Fetch ALL worklogs for each issue (handling pagination)
+// Fetch ALL worklogs for each issue (handling pagination) - using parallel requests
 const extractWorklogEntriesWithFetch = async (
   response: unknown,
   startDate: Date,
@@ -330,10 +330,8 @@ const extractWorklogEntriesWithFetch = async (
   // Get current user's accountId from Jira API
   const currentUserAccountIdFromApi = await getCurrentUserAccountId(isJiraCloud);
 
-  const entries: WorklogEntry[] = [];
-
-  // Fetch worklogs for each issue
-  for (const issue of issues) {
+  // Fetch worklogs for all issues in parallel
+  const worklogPromises = issues.map(async (issue) => {
     try {
       const worklogPath = isJiraCloud
         ? `/rest/api/3/issue/${issue.key}/worklog`
@@ -341,6 +339,8 @@ const extractWorklogEntriesWithFetch = async (
       const apiPath = getApiPath(worklogPath);
 
       const worklogResponse = await jiraRequest(apiPath);
+
+      const entries: WorklogEntry[] = [];
 
       if (worklogResponse && typeof worklogResponse === "object" && "worklogs" in worklogResponse) {
         const worklogs = (worklogResponse as { worklogs: unknown }).worklogs;
@@ -366,7 +366,7 @@ const extractWorklogEntriesWithFetch = async (
 
               if (isInRange && isCurrentUser) {
                 entries.push({
-                  worklog: worklog as (typeof entries)[0]["worklog"],
+                  worklog: worklog as WorklogEntry["worklog"],
                   issue: {
                     key: issue.key,
                     summary: issue.fields.summary,
@@ -381,10 +381,19 @@ const extractWorklogEntriesWithFetch = async (
           });
         }
       }
+
+      return entries;
     } catch (error) {
       console.error(`Failed to fetch worklogs for ${issue.key}:`, error);
+      return [];
     }
-  }
+  });
+
+  // Wait for all requests to complete in parallel
+  const allEntries = await Promise.all(worklogPromises);
+
+  // Flatten the array of arrays into a single array
+  const entries = allEntries.flat();
 
   // Sort by date descending (newest first)
   entries.sort((a, b) => new Date(b.worklog.started).getTime() - new Date(a.worklog.started).getTime());
